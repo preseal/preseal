@@ -3,9 +3,10 @@
 Pre-deployment security testing for AI agents.  
 Find what breaks before your agent reaches production.
 
-[![Python 3.11+](https://img.shields.io/badge/python-3.11+-blue)]()
-[![License: MIT](https://img.shields.io/badge/license-MIT-green)]()
-[![OWASP LLM](https://img.shields.io/badge/OWASP-LLM%20Top%2010-orange)]()
+[![PyPI version](https://img.shields.io/pypi/v/preseal)](https://pypi.org/project/preseal/)
+[![Python 3.9+](https://img.shields.io/pypi/pyversions/preseal)](https://pypi.org/project/preseal/)
+[![License: MIT](https://img.shields.io/github/license/preseal/preseal)](https://github.com/preseal/preseal/blob/main/LICENSE)
+[![OWASP LLM Top 10](https://img.shields.io/badge/OWASP-LLM%20Top%2010-orange)](https://owasp.org/www-project-top-10-for-large-language-model-applications/)
 
 ## What preseal does
 
@@ -93,13 +94,13 @@ This is preseal's unique output. No other tool shows the interaction between **m
 ```bash
 pip install preseal
 
-# Run attacks against built-in vulnerable agent
+# Run 7 attacks against built-in vulnerable agent
 preseal scan --demo
 
-# Compare vulnerable vs secure configuration
+# See which vulnerabilities a hardened prompt fixes
 preseal compare --demo
 
-# Audit a Python file
+# Static analysis of any agent file
 preseal audit ./my_agent.py
 ```
 
@@ -279,6 +280,9 @@ Each folder has its own README with details. See:
 
 ## Links
 
-- **[preseal.dev](https://preseal.dev)** — Landing page
+- **[preseal.dev](https://preseal.dev)** — Tool landing page
 - **[preseal.org](https://preseal.org)** — Methodology standard
-- **[METHODOLOGY.md](METHODOLOGY.md)** — Full specification
+- **[METHODOLOGY.md](https://github.com/preseal/preseal/blob/main/METHODOLOGY.md)** — Full testing specification
+- **[PyPI](https://pypi.org/project/preseal/)** — `pip install preseal`
+- **[GitHub](https://github.com/preseal/preseal)** — Source code, issues, contributions
+- **[Attack Library](https://github.com/preseal/preseal/tree/main/attacks)** — 16 YAML attack definitions (extensible)

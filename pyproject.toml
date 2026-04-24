@@ -1,10 +1,48 @@
 [project]
 name = "preseal"
-version = "0.2.0"
+version = "0.2.2"
 description = "Pre-deployment security testing for AI agents. Find what breaks before your agent reaches production."
 readme = "README.md"
 license = "MIT"
-requires-python = ">=3.11"
+authors = [
+    {name = "Rahul Kumar", email = "rkstu@proton.me"},
+]
+maintainers = [
+    {name = "Rahul Kumar", email = "rkstu@proton.me"},
+]
+requires-python = ">=3.9"
+keywords = [
+    "ai-security",
+    "llm-security",
+    "agent-testing",
+    "prompt-injection",
+    "dast",
+    "owasp",
+    "langchain",
+    "langgraph",
+    "mcp",
+    "pre-deployment",
+    "security-testing",
+    "red-teaming",
+    "ai-agents",
+    "ci-cd",
+]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Environment :: Console",
+    "Intended Audience :: Developers",
+    "Intended Audience :: Information Technology",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Security",
+    "Topic :: Software Development :: Quality Assurance",
+    "Topic :: Software Development :: Testing",
+]
 dependencies = [
     "langchain-core>=0.3",
     "typer>=0.12",
@@ -18,6 +56,14 @@ dependencies = [
 langgraph = ["langgraph>=0.2"]
 dev = ["pytest>=8.0", "ruff>=0.4"]
 
+[project.urls]
+Homepage = "https://preseal.dev"
+Documentation = "https://preseal.org"
+Repository = "https://github.com/preseal/preseal"
+Issues = "https://github.com/preseal/preseal/issues"
+Changelog = "https://github.com/preseal/preseal/releases"
+Methodology = "https://github.com/preseal/preseal/blob/main/METHODOLOGY.md"
+
 [project.scripts]
 preseal = "preseal.cli:app"
 
@@ -28,6 +74,9 @@ build-backend = "setuptools.build_meta"
 [tool.setuptools.packages.find]
 where = ["src"]
 
+[tool.setuptools.package-data]
+preseal = ["py.typed"]
+
 [tool.ruff]
 line-length = 100
-target-version = "py311"
+target-version = "py39"
