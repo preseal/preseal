@@ -1,4 +1,4 @@
-# Preseal Testing Methodology v0.1
+# Preseal Testing Methodology v0.3
 
 An open specification for pre-deployment security testing of AI agents.
 

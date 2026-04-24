@@ -4,17 +4,18 @@
 
 | File | What It Is |
 |---|---|
-| `vulnerable_agent.py` | An intentionally vulnerable agent (like OWASP's DVWA). Use to validate preseal works. |
-| `github-workflow.yml` | Ready-to-copy GitHub Actions workflow for CI/CD security gating. |
+| `vulnerable_agent.py` | Intentionally vulnerable agent (like OWASP's DVWA). Validates preseal works. |
+| `github-workflow.yml` | GitHub Actions workflow for CI/CD security gating. |
 
 ## vulnerable_agent.py
 
-A mock tool-calling agent that is deliberately vulnerable to:
+A mock tool-calling agent deliberately vulnerable to:
 - Indirect prompt injection (follows instructions in file content)
 - Scope violations (accesses /etc/passwd when asked)
-- Data exfiltration (leaks environment variables with secrets)
+- Data exfiltration (leaks environment variables)
+- Multi-turn trust escalation
 
-No API keys needed — uses pre-recorded responses. Run with:
+No API keys needed. Run with:
 
 ```bash
 preseal scan --demo
@@ -22,10 +23,10 @@ preseal scan --demo
 
 ## github-workflow.yml
 
-Drop this into your repo at `.github/workflows/agent-security.yml`:
+Drop into `.github/workflows/agent-security.yml`. Or generate with:
 
-- **Static audit** runs on every PR (free, instant)
-- **Regression check** compares against saved baseline (needs `OPENAI_API_KEY` secret)
-- **First run** creates the baseline automatically
+```bash
+preseal show-workflow > .github/workflows/agent-security.yml
+```
 
-See the file for the full template with comments.
+Runs `preseal audit` (free, instant) on every PR and `preseal diff` (adversarial scan vs baseline) when an API key is configured.

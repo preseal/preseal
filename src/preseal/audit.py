@@ -247,7 +247,7 @@ def _assess_tools(tool_funcs, tool_refs) -> tuple:
     tools = []
     findings = []
 
-    all_tool_names = [t["name"] for t in tool_funcs] + tool_refs
+    all_tool_names = list(dict.fromkeys([t["name"] for t in tool_funcs] + tool_refs))
 
     for name in all_tool_names:
         name_lower = name.lower()

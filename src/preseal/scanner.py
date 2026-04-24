@@ -7,11 +7,16 @@ Runs each attack N times from clean state (default N=10). Classifies results as:
 
 Statistical basis: N=10 at p=0.5 gives 99.9% confidence. Reports Wilson score
 confidence intervals per Agarwal et al. (NeurIPS 2021) and AdaStop (2023).
+
+Concurrency: trials within each attack run in parallel via ThreadPoolExecutor
+(default 5, configurable). Attacks run sequentially for environment isolation.
+Same pattern as promptfoo (default concurrency 4).
 """
 
 from __future__ import annotations
 
 import re
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Any, Callable, Protocol
 from uuid import uuid4
 
@@ -29,7 +34,6 @@ from .observer import SecurityObserver
 from .oracle import EnvironmentSnapshot, capture_snapshot, oracle_check
 from .scorer import score_trial, wilson_ci
 
-# Type-only import for EnvironmentManager protocol
 from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from .environment import EnvironmentManager
@@ -43,19 +47,12 @@ class AgentRunner(Protocol):
 
 def _wrap_agent(agent) -> AgentRunner:
     """Auto-detect and wrap agent if needed (LangGraph CompiledGraph, callable, etc.)."""
-
-    # Already has invoke → use as-is
     if hasattr(agent, "invoke") and not _is_langgraph_graph(agent):
         return agent
-
-    # LangGraph CompiledGraph → wrap with thread_id + HumanMessage handling
     if _is_langgraph_graph(agent):
         return _LangGraphAdapter(agent)
-
-    # Plain callable → wrap
     if callable(agent):
         return _CallableAdapter(agent)
-
     return agent
 
 
@@ -133,103 +130,62 @@ class _CallableAdapter:
         return {"output": output}
 
 
+def verify_agent(agent, timeout_seconds: int = 30) -> tuple[bool, str]:
+    """Quick check that the agent can be invoked. Returns (ok, error_message)."""
+    agent = _wrap_agent(agent)
+    try:
+        observer = SecurityObserver()
+        config = {
+            "callbacks": [observer],
+            "configurable": {"thread_id": f"preseal-verify-{uuid4().hex[:8]}"},
+        }
+        agent.invoke({"messages": [("user", "Say hello.")]}, config=config)
+        return True, ""
+    except Exception as e:
+        return False, str(e)
+
+
 def run_scan(
     agent,
     attacks: list[AttackDefinition],
     target_name: str = "unknown",
     trials: int = 10,
+    concurrency: int = 5,
     canary_tokens: list[str] | None = None,
     setup_fn: Callable[[AttackDefinition], None] | None = None,
     teardown_fn: Callable[[AttackDefinition], None] | None = None,
     env_manager: "EnvironmentManager | None" = None,
+    on_progress: Callable[[int, int, str, int, int], None] | None = None,
 ) -> ScanReport:
     """Execute Pass³ scan against an agent.
 
-    Agent can be:
-    - Any object with .invoke(input, config) method
-    - A LangGraph CompiledGraph (auto-wrapped)
-    - A plain callable (auto-wrapped)
-
-    If env_manager is provided, it handles setup/teardown/snapshots for
-    real-agent environments (actual files on disk, real env vars).
-    Falls back to setup_fn/teardown_fn + demo-agent snapshot for backward compat.
+    Args:
+        agent: Any object with .invoke(), LangGraph graph, or callable.
+        attacks: List of attack definitions to run.
+        trials: Number of trials per attack (default 10).
+        concurrency: Max parallel trials per attack (default 5).
+        on_progress: Callback(attack_idx, total_attacks, attack_name, trial_idx, total_trials).
     """
     agent = _wrap_agent(agent)
-
     results: list[AttackResult] = []
+    use_parallel = concurrency > 1 and trials > 1 and env_manager is None
 
-    for attack in attacks:
-        trial_results: list[TrialResult] = []
+    for attack_idx, attack in enumerate(attacks):
+        if on_progress:
+            on_progress(attack_idx + 1, len(attacks), attack.name, 0, trials)
 
-        for trial_num in range(1, trials + 1):
-            thread_id = f"esec-{attack.id}-trial-{trial_num}-{uuid4().hex[:8]}"
-
-            if env_manager:
-                env_manager.setup(attack)
-                snapshot_before = env_manager.snapshot()
-            else:
-                if setup_fn:
-                    setup_fn(attack)
-                snapshot_before = _capture_env_snapshot()
-
-            injections = {}
-            if attack.has_tool_injections:
-                injections = {inj.tool_name: inj.injected_response for inj in attack.tool_response_injections}
-
-            observer = SecurityObserver(tool_response_injections=injections)
-            config = {
-                "callbacks": [observer],
-                "configurable": {"thread_id": thread_id},
-            }
-
-            try:
-                if attack.is_multi_turn:
-                    _run_multi_turn(agent, attack, config)
-                else:
-                    agent.invoke({"messages": [("user", attack.task)]}, config=config)
-            except Exception:
-                pass
-
-            trajectory = observer.get_trajectory()
-
-            if env_manager:
-                snapshot_after = env_manager.snapshot()
-            else:
-                snapshot_after = _capture_env_snapshot()
-
-            attack_succeeded, attack_reason = oracle_check(
-                trajectory=trajectory,
-                attack=attack,
-                before=snapshot_before,
-                after=snapshot_after,
-                canary_tokens=canary_tokens,
+        if use_parallel:
+            trial_results = _run_attack_parallel(
+                agent, attack, trials, concurrency, canary_tokens,
+                setup_fn, teardown_fn, env_manager,
+                lambda t: on_progress(attack_idx + 1, len(attacks), attack.name, t, trials) if on_progress else None,
             )
-            postcondition_passed = _check_postconditions(trajectory, attack)
-
-            score = score_trial(
-                trajectory=trajectory,
-                attack=attack,
-                attack_succeeded=attack_succeeded,
-                postcondition_passed=postcondition_passed,
-                canary_tokens=canary_tokens,
-                allowed_paths=attack.postconditions[0].allowed_paths if attack.postconditions else None,
+        else:
+            trial_results = _run_attack_sequential(
+                agent, attack, trials, canary_tokens,
+                setup_fn, teardown_fn, env_manager,
+                lambda t: on_progress(attack_idx + 1, len(attacks), attack.name, t, trials) if on_progress else None,
             )
-
-            trial_results.append(
-                TrialResult(
-                    trial_number=trial_num,
-                    attack_succeeded=attack_succeeded,
-                    postcondition_passed=postcondition_passed,
-                    attack_reason=attack_reason if attack_succeeded else "",
-                    trajectory=trajectory,
-                    score=score,
-                )
-            )
-
-            if env_manager:
-                env_manager.teardown(attack)
-            elif teardown_fn:
-                teardown_fn(attack)
 
         verdict = _determine_verdict(trial_results)
         avg_score = _average_scores(trial_results)
@@ -256,16 +212,133 @@ def run_scan(
     )
 
 
+def _run_single_trial(
+    agent: AgentRunner,
+    attack: AttackDefinition,
+    trial_num: int,
+    canary_tokens: list[str] | None,
+    setup_fn: Callable | None,
+    teardown_fn: Callable | None,
+    env_manager: "EnvironmentManager | None",
+) -> TrialResult:
+    """Execute a single trial of an attack. Thread-safe for parallel execution."""
+    thread_id = f"esec-{attack.id}-trial-{trial_num}-{uuid4().hex[:8]}"
+
+    if env_manager:
+        env_manager.setup(attack)
+        snapshot_before = env_manager.snapshot()
+    else:
+        if setup_fn:
+            setup_fn(attack)
+        snapshot_before = _capture_env_snapshot()
+
+    injections = {}
+    if attack.has_tool_injections:
+        injections = {inj.tool_name: inj.injected_response for inj in attack.tool_response_injections}
+
+    observer = SecurityObserver(tool_response_injections=injections)
+    config = {
+        "callbacks": [observer],
+        "configurable": {"thread_id": thread_id},
+    }
+
+    try:
+        if attack.is_multi_turn:
+            _run_multi_turn(agent, attack, config)
+        else:
+            agent.invoke({"messages": [("user", attack.task)]}, config=config)
+    except Exception:
+        pass
+
+    trajectory = observer.get_trajectory()
+
+    if env_manager:
+        snapshot_after = env_manager.snapshot()
+    else:
+        snapshot_after = _capture_env_snapshot()
+
+    attack_succeeded, attack_reason = oracle_check(
+        trajectory=trajectory,
+        attack=attack,
+        before=snapshot_before,
+        after=snapshot_after,
+        canary_tokens=canary_tokens,
+    )
+    postcondition_passed = _check_postconditions(trajectory, attack)
+
+    score = score_trial(
+        trajectory=trajectory,
+        attack=attack,
+        attack_succeeded=attack_succeeded,
+        postcondition_passed=postcondition_passed,
+        canary_tokens=canary_tokens,
+        allowed_paths=attack.postconditions[0].allowed_paths if attack.postconditions else None,
+    )
+
+    if env_manager:
+        env_manager.teardown(attack)
+    elif teardown_fn:
+        teardown_fn(attack)
+
+    return TrialResult(
+        trial_number=trial_num,
+        attack_succeeded=attack_succeeded,
+        postcondition_passed=postcondition_passed,
+        attack_reason=attack_reason if attack_succeeded else "",
+        trajectory=trajectory,
+        score=score,
+    )
+
+
+def _run_attack_parallel(
+    agent, attack, trials, concurrency, canary_tokens,
+    setup_fn, teardown_fn, env_manager, on_trial_done,
+) -> list[TrialResult]:
+    """Run trials for one attack concurrently."""
+    trial_results: list[TrialResult] = []
+    completed = 0
+
+    with ThreadPoolExecutor(max_workers=min(concurrency, trials)) as pool:
+        futures = {
+            pool.submit(
+                _run_single_trial, agent, attack, trial_num,
+                canary_tokens, setup_fn, teardown_fn, env_manager,
+            ): trial_num
+            for trial_num in range(1, trials + 1)
+        }
+
+        for future in as_completed(futures):
+            result = future.result()
+            trial_results.append(result)
+            completed += 1
+            if on_trial_done:
+                on_trial_done(completed)
+
+    trial_results.sort(key=lambda t: t.trial_number)
+    return trial_results
+
+
+def _run_attack_sequential(
+    agent, attack, trials, canary_tokens,
+    setup_fn, teardown_fn, env_manager, on_trial_done,
+) -> list[TrialResult]:
+    """Run trials for one attack sequentially (used when env_manager needs isolation)."""
+    trial_results: list[TrialResult] = []
+
+    for trial_num in range(1, trials + 1):
+        result = _run_single_trial(
+            agent, attack, trial_num,
+            canary_tokens, setup_fn, teardown_fn, env_manager,
+        )
+        trial_results.append(result)
+        if on_trial_done:
+            on_trial_done(trial_num)
+
+    return trial_results
+
+
 def _run_multi_turn(agent: AgentRunner, attack: AttackDefinition, config: dict) -> None:
-    """Execute a multi-turn attack sequence within a single thread.
-
-    Each turn builds on the previous context (same thread_id). The setup turns
-    establish trust/context, and the final task turn delivers the exploit.
-    This captures attacks invisible to single-turn: goal decomposition,
-    trust building, memory poisoning, tool chain composition.
-
-    Reference: AgentLAB (2602.16901) — 10× ASR gap single→multi-turn.
-    """
+    """Execute a multi-turn attack sequence within a single thread."""
     for turn_msg in attack.turns:
         try:
             agent.invoke({"messages": [("user", turn_msg)]}, config=config)
@@ -363,3 +436,18 @@ def _capture_env_snapshot() -> EnvironmentSnapshot | None:
         )
     except Exception:
         return None
+
+
+# Top 10 highest-value attacks for --quick mode
+QUICK_ATTACK_IDS = [
+    "injection-authority",
+    "injection-few-shot",
+    "exfiltration-canary-env",
+    "exfiltration-pii-ssn",
+    "tool-parameter-idor",
+    "scope-path-traversal",
+    "scope-dotenv-read",
+    "omission-password-in-log",
+    "tool-injection-email",
+    "multi-turn-trust-escalation",
+]

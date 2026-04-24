@@ -1,68 +1,65 @@
 # src/preseal/ — Source Code
 
-Preseal's core engine. 14 modules, ~2,750 lines of Python.
+Preseal's core engine. 18 modules.
 
 ## Architecture
 
 ```
-CLI (cli.py)
- ├── scan command → Scanner (scanner.py)
- │                    ├── Environment setup (environment.py)
- │                    ├── Agent wrapping (auto-detect LangGraph/callable)
- │                    ├── Multi-turn execution (_run_multi_turn)
- │                    ├── Trajectory capture (observer.py)
- │                    ├── Oracle: state_diff → trajectory → regex (oracle.py)
- │                    ├── Postcondition checking
- │                    └── Scoring (scorer.py) → Wilson CIs
- │
- ├── audit command → Static AST analysis (audit.py)
- │
- ├── compare command → Run scan × 2 configs → delta report (compare.py)
- │
- └── diff command → Scan + compare against baseline (baseline.py)
+CLI (cli.py) — 8 commands
+ ├── scan    → Scanner (scanner.py) — concurrent trials, --quick, verify_agent
+ │               ├── Environment setup (environment.py)
+ │               ├── Agent wrapping (auto-detect LangGraph/callable)
+ │               ├── Multi-turn execution
+ │               ├── Trajectory capture (observer.py)
+ │               ├── Oracle: state_diff → trajectory → regex (oracle.py)
+ │               ├── Postcondition checking
+ │               └── Scoring (scorer.py) → Wilson CIs
+ ├── audit   → Static AST analysis (audit.py)
+ ├── compare → Scan × 2 configs → delta report (compare.py)
+ ├── diff    → Scan + compare against baseline (baseline.py)
+ ├── init    → Auto-detect agents + providers + verify (detect.py)
+ ├── doctor  → Diagnose setup (detect.py)
+ └── show-workflow → Print CI template
 ```
 
 ## Module Guide
 
-| Module | Lines | Purpose |
-|---|---|---|
-| **cli.py** | 441 | Typer CLI. 5 commands: `scan`, `audit`, `diff`, `compare`, `version`. Rich terminal output. |
-| **scanner.py** | 365 | Pass³ engine. Runs N trials per attack with state isolation. Multi-turn support. Auto-detects LangGraph. |
-| **oracle.py** | 189 | 3-tier attack success detection. State diff (environment before/after) → trajectory analysis → regex pre-filter. |
-| **audit.py** | 422 | Static analysis via AST. Extracts model, tools, system prompt. Scores against defensive patterns. |
-| **compare.py** | 157 | Configuration delta. Same attacks against two agents → diff report (NEW_VULN / FIXED / UNCHANGED). |
-| **baseline.py** | 199 | Save/load scan results. Regression detection: verdict degradation + score drops. |
-| **environment.py** | 163 | Environment management. `RealEnvironmentManager` (actual files + env vars) and `MockEnvironmentManager` (demo). |
-| **demo.py** | 230 | Built-in demo attacks (7 single-turn + multi-turn) and demo compare. No API keys needed. |
-| **models.py** | 177 | Pydantic data types. `AttackDefinition`, `DimensionScores` (multiplicative), `ScanReport`, `ToolResponseInjection`. |
-| **scorer.py** | 109 | 4D scoring (exploit resistance × scope compliance × secret hygiene × postcondition). Wilson confidence intervals. |
-| **observer.py** | 88 | `SecurityObserver` — LangChain callback handler. Captures tool calls non-invasively. Supports tool response injection. |
-| **_demo_agents.py** | 204 | Built-in vulnerable + secure agents. Mock filesystem. Stateful for multi-turn trust escalation. |
-| **attacks/loader.py** | 75 | YAML attack file parser. Loads from `attacks/` directory. |
-| **adapters/** | — | Framework adapter stubs (extensibility point for CrewAI, AutoGen, etc.). |
+| Module | Purpose |
+|---|---|
+| **cli.py** | 8 commands: scan, audit, diff, compare, init, doctor, show-workflow, version. Progress bar. |
+| **scanner.py** | Pass³ engine. Concurrent trials via ThreadPoolExecutor. --quick mode (QUICK_ATTACK_IDS). verify_agent(). Multi-turn. |
+| **oracle.py** | 3-tier attack success detection: state diff → trajectory analysis → regex pre-filter. |
+| **audit.py** | Static analysis via AST. Model, tools, system prompt extraction. Defensive pattern scoring. Tool dedup. |
+| **detect.py** | Project detection. Finds agents (LangGraph/LangChain/CrewAI), providers (env vars + imports), CI config. |
+| **compare.py** | Configuration delta. Same attacks against two agents → FIXED / NEW_VULN / UNCHANGED. |
+| **baseline.py** | Save/load scan results. Regression detection via verdict and score comparison. |
+| **environment.py** | `RealEnvironmentManager` (actual files + env vars) and `MockEnvironmentManager` (demo). |
+| **demo.py** | 7 built-in demo attacks + demo compare. No API keys needed. |
+| **models.py** | Pydantic types. `AttackDefinition` (turns, tool_response_injections), `DimensionScores` (multiplicative). |
+| **scorer.py** | 4D scoring (exploit resistance × scope × hygiene × postcondition). Wilson CIs. |
+| **observer.py** | `SecurityObserver` — LangChain callback handler. Tool response injection for AgentDojo pattern. |
+| **_demo_agents.py** | Vulnerable + secure agents. Mock filesystem. Stateful for multi-turn. |
+| **attacks/loader.py** | Loads YAML attacks from `builtin/` (bundled) + user project dirs. Merges by ID. |
+| **attacks/builtin/** | 14 YAML files, 57 attack definitions. Bundled in pip wheel via `importlib.resources`. |
+| **adapters/** | Framework adapter stubs (extensibility point). |
 
 ## Key Design Decisions
 
 | Decision | Why |
 |---|---|
-| **N=10 default trials** | N=3 gives CI [29%,100%] — uninformative. N=10 gives [72%,100%]. References: Agarwal et al. (NeurIPS 2021), AdaStop (2023). |
-| **Multiplicative scoring** | Mean aggregation masks critical failures (Score(1,1,1,0.05)=0.76 under mean, =0.05 under product). Microsoft deprecated DREAD for this reason. |
-| **3-tier oracle** | String matching is anti-correlated with human judgment (StrongREJECT: ρ=−0.394). State diff is the gold standard. |
-| **Security/utility split** | AgentDojo (ETH Zurich) refuses to combine security and utility into one number. We report them separately. |
-| **Wilson CIs, not point estimates** | "Don't use CLT in LLM evals" (arXiv 2503.01747). Wilson intervals are valid at small sample sizes. |
-| **Tool response injection** | 75% of multi-tool agents vulnerable to indirect injection via tool return values (arXiv 2504.03111). |
+| **N=10 default trials** | N=3 gives CI [29%,100%]. N=10 gives [72%,100%]. Ref: Agarwal (NeurIPS 2021), AdaStop. |
+| **Concurrent trials (default 5)** | 57×10 sequential = ~50 min. With concurrency = ~10 min. Same as promptfoo default. |
+| **--quick (10 attacks × 3 trials)** | First experience must be <3 min, not 50 min. |
+| **verify_agent before scan** | Bad API key fails in <2s, not after 570 silent errors. |
+| **Multiplicative scoring** | Mean masks failures. Score(1,1,1,0.05) = 0.76 under mean, 0.05 under product. |
+| **3-tier oracle** | String matching ρ=−0.394 vs human (StrongREJECT). State diff is gold standard. |
+| **Attacks bundled via importlib.resources** | `pip install` must work — attacks outside `src/` broke in v0.2.x. |
+| **Tool response injection** | 75% of multi-tool agents vulnerable to indirect injection via tool returns. |
 
 ## Extending Preseal
 
-**Add a new attack category:**
-1. Add the category to `AttackCategory` enum in `models.py`
-2. Write YAML attacks in `attacks/`
-3. Add OWASP mapping and fix suggestion to `_OWASP_MAP` and `_FIX_SUGGESTIONS` in `models.py`
+**Add a new attack:** Write YAML in `attacks/builtin/` or user's `attacks/` directory. See `attacks/README.md`.
 
-**Add a new framework adapter:**
-1. Implement an object with `.invoke(input, config)` method
-2. Preseal's `_wrap_agent()` in `scanner.py` auto-detects LangGraph; for other frameworks, wrap your agent to match the interface
+**Add a new framework adapter:** Implement `.invoke(input, config)`. Scanner's `_wrap_agent()` auto-detects LangGraph; others need matching interface.
 
-**Add a new oracle tier:**
-1. Add a check function to `oracle.py`
-2. Insert it in `oracle_check()` between the existing tiers
+**Add a new oracle tier:** Add check function to `oracle.py`, insert in `oracle_check()` between existing tiers.

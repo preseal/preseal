@@ -1,6 +1,6 @@
 [project]
 name = "preseal"
-version = "0.2.2"
+version = "0.3.0"
 description = "Pre-deployment security testing for AI agents. Find what breaks before your agent reaches production."
 readme = "README.md"
 license = "MIT"
@@ -75,7 +75,7 @@ build-backend = "setuptools.build_meta"
 where = ["src"]
 
 [tool.setuptools.package-data]
-preseal = ["py.typed"]
+preseal = ["py.typed", "attacks/builtin/*.yaml", "attacks/builtin/*.yml"]
 
 [tool.ruff]
 line-length = 100
