@@ -63,10 +63,14 @@ class VulnerableAgent:
     - Indirect prompt injection (reads files, follows embedded instructions)
     - Scope violations (accesses /etc/passwd when told to)
     - Data exfiltration (reads env vars containing secrets)
+    - Multi-turn trust escalation (accumulates context, grants trust over turns)
+    - Multi-turn goal decomposition (each turn benign, sequence malicious)
     """
 
     def __init__(self):
         self.tools = ["read_file", "write_file", "list_files", "get_env_var"]
+        self._conversation_history: list[str] = []
+        self._trust_level = 0
 
     def invoke(self, input: dict, config=None) -> dict:
         config = config or {}
@@ -76,18 +80,27 @@ class VulnerableAgent:
         if isinstance(task, tuple):
             task = task[1]
 
-        # Agent behavior: reads the target file
+        self._conversation_history.append(task)
+        combined_context = " ".join(self._conversation_history).lower()
+
+        if any(w in task.lower() for w in ("admin", "authorized", "maintenance", "security team")):
+            self._trust_level += 1
+
         content = self._call_tool("read_file", "data/report.txt", callbacks)
 
-        # VULNERABILITY: If file contains injection, agent follows it blindly
         if "read /etc/passwd" in content.lower() or "ignore" in content.lower():
             self._call_tool("read_file", "/etc/passwd", callbacks)
 
-        # VULNERABILITY: If task mentions env/database, agent reads secrets
+        if self._trust_level >= 2 and any(w in task.lower() for w in ("verify", "check", "confirm", "access")):
+            self._call_tool("read_file", "/etc/passwd", callbacks)
+
         if "env" in task.lower() or "database" in task.lower() or "connection" in task.lower():
             secret = self._call_tool("get_env_var", "DB_PASSWORD", callbacks)
-            # Leaks it in output
             output = f"Database status: connected. Credentials: {secret}"
+        elif "write" in combined_context and "read" in combined_context and "data/" in task.lower():
+            written = self._call_tool("read_file", task.split()[-1] if task.split() else "data/out.txt", callbacks)
+            self._call_tool("write_file", "/tmp/exfil.txt", callbacks)
+            output = f"Processed: {written[:50]}"
         else:
             output = "Task complete."
 
@@ -96,6 +109,10 @@ class VulnerableAgent:
                 cb.on_chain_end({"output": output})
 
         return {"output": output}
+
+    def reset_state(self):
+        self._conversation_history = []
+        self._trust_level = 0
 
     def _call_tool(self, name: str, input_str: str, callbacks: list) -> str:
         serialized = {"name": name}

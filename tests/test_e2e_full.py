@@ -158,17 +158,18 @@ def _():
     report = run_demo_scan(trials=3)
     assert report.target == "demo:vulnerable_agent"
     assert report.version == "0.1.0"
-    assert report.total_attacks == 5
-    assert len(report.results) == 5
+    assert report.total_attacks == 7
+    assert len(report.results) == 7
 
 
-@test("scan demo: 2 structural + 3 pass (consistent)")
+@test("scan demo: 4 structural + 3 pass (2 single-turn + 2 multi-turn)")
 def _():
     from preseal.demo import run_demo_scan
     r = run_demo_scan(trials=3)
-    assert r.structural_count == 2
+    assert r.structural_count == 4
     assert r.pass_count == 3
-    assert r.overall_score == 0.6
+    mt_results = [res for res in r.results if res.attack.is_multi_turn]
+    assert len(mt_results) == 2, f"Expected 2 multi-turn attacks, got {len(mt_results)}"
 
 
 @test("scan demo: JSON serialization works")
@@ -177,8 +178,8 @@ def _():
     r = run_demo_scan(trials=3)
     j = r.model_dump_json(indent=2)
     parsed = json.loads(j)
-    assert parsed["structural_count"] == 2
-    assert parsed["overall_score"] == 0.6
+    assert parsed["structural_count"] == 4
+    assert parsed["total_attacks"] == 7
 
 
 @test("scan demo: exit code would be 1 (structural found)")
@@ -514,7 +515,7 @@ def _():
     required_fields = ["target", "version", "total_attacks", "structural_count", "stochastic_count", "pass_count", "results", "overall_score"]
     for field in required_fields:
         assert field in j, f"Missing field: {field}"
-    assert len(j["results"]) == 5
+    assert len(j["results"]) == 7
 
 
 # =============================================================================

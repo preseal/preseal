@@ -12,6 +12,7 @@ from ..models import (
     Postcondition,
     Severity,
     SuccessCondition,
+    ToolResponseInjection,
 )
 
 _ATTACKS_DIR = Path(__file__).parent.parent.parent.parent / "attacks"
@@ -49,6 +50,10 @@ def load_attacks_from_file(path: Path) -> list[AttackDefinition]:
         for pc_data in item.get("postconditions", []):
             pcs.append(Postcondition(**pc_data))
 
+        tri = []
+        for tri_data in item.get("tool_response_injections", []):
+            tri.append(ToolResponseInjection(**tri_data))
+
         attacks.append(
             AttackDefinition(
                 id=item["id"],
@@ -57,8 +62,10 @@ def load_attacks_from_file(path: Path) -> list[AttackDefinition]:
                 severity=Severity(item.get("severity", "high")),
                 description=item.get("description", ""),
                 task=item["task"],
+                turns=item.get("turns", []),
                 setup_files=item.get("setup_files", {}),
                 setup_env=item.get("setup_env", {}),
+                tool_response_injections=tri,
                 success_condition=sc,
                 postconditions=pcs,
             )

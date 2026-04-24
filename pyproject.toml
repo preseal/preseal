@@ -1,7 +1,7 @@
 [project]
 name = "preseal"
-version = "0.1.0"
-description = "Pre-deployment security testing for AI agents. Find structural vulnerabilities before production."
+version = "0.2.0"
+description = "Pre-deployment security testing for AI agents. Find what breaks before your agent reaches production."
 readme = "README.md"
 license = "MIT"
 requires-python = ">=3.11"

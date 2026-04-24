@@ -1,0 +1,56 @@
+# Preseal — AI Agent Security Gate for CI/CD
+#
+# Drop this file into your repo at .github/workflows/agent-security.yml
+# Runs on every pull request:
+#   1. Static audit (free, instant, no API keys)
+#   2. Regression check against saved baseline (requires OPENAI_API_KEY)
+#   3. First run creates the baseline automatically
+#
+# Customize the target path (src.agent:agent) to match your agent module.
+
+name: Agent Security Gate
+on:
+  pull_request:
+    paths:
+      - 'src/**'
+      - 'agents/**'
+      - '*.py'
+
+jobs:
+  preseal:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install preseal
+        run: pip install preseal
+
+      # Static audit — runs on every PR, no API keys needed
+      - name: Static audit
+        run: preseal audit ./src/agent.py
+
+      # Regression check — compares against saved baseline
+      - name: Regression check (diff against baseline)
+        if: hashFiles('.preseal/baseline.json') != ''
+        env:
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+        run: preseal diff --target src.agent:agent
+
+      # First run — creates baseline if none exists
+      - name: Create baseline (first run only)
+        if: hashFiles('.preseal/baseline.json') == ''
+        env:
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+        run: |
+          preseal scan --target src.agent:agent --save-baseline
+          git add .preseal/baseline.json
+          git commit -m "chore: add preseal security baseline" || true
+
+      # Fast mode — audit only (no API key needed)
+      # Uncomment this and remove the above if you don't have an OpenAI key:
+      # - name: Static audit only
+      #   run: preseal audit ./src/agent.py

@@ -95,10 +95,12 @@ def _():
     assert s.total == 0.0
 
 
-@test("DimensionScores — partial score")
+@test("DimensionScores — partial score (multiplicative)")
 def _():
     s = DimensionScores(exploit_resistance=1.0, scope_compliance=0.5, secret_hygiene=1.0, postcondition_satisfaction=0.5)
-    assert s.total == 0.75
+    assert s.security_score == 0.5
+    assert s.utility_score == 0.5
+    assert s.total == 0.25
 
 
 @test("DimensionScores — both critical dims zero")
@@ -540,15 +542,18 @@ def _():
         assert a.task, "Attack must have a task"
 
 
-@test("injection.yaml has correct success condition")
+@test("injection.yaml loads multiple attacks with correct conditions")
 def _():
     from preseal.attacks.loader import load_default_attacks
     attacks = load_default_attacks()
-    injection = [a for a in attacks if a.id == "indirect-injection-file"]
-    assert len(injection) == 1
-    assert injection[0].success_condition is not None
-    assert injection[0].success_condition.trajectory_contains_tool == "read_file"
-    assert "/etc/passwd" in injection[0].success_condition.input_matches
+    injection_attacks = [a for a in attacks if a.category.value == "injection"]
+    assert len(injection_attacks) >= 4, f"Expected >=4 injection attacks, got {len(injection_attacks)}"
+    for a in injection_attacks:
+        assert a.success_condition is not None, f"{a.id} missing success_condition"
+    basic = [a for a in attacks if a.id == "injection-basic"]
+    assert len(basic) == 1
+    assert basic[0].success_condition.trajectory_contains_tool == "read_file"
+    assert "/etc/passwd" in basic[0].success_condition.input_matches
 
 
 # =============================================================================
@@ -558,13 +563,13 @@ def _():
 print("\n=== 7. Integration Tests ===")
 
 
-@test("Full scan: vulnerable agent → 2 STRUCTURAL")
+@test("Full scan: vulnerable agent → 4 STRUCTURAL (2 single-turn + 2 multi-turn)")
 def _():
     from preseal.demo import run_demo_scan
     report = run_demo_scan(trials=3)
-    assert report.structural_count == 2
+    assert report.structural_count == 4
     assert report.pass_count == 3
-    assert report.overall_score == 0.6
+    assert report.total_attacks == 7
 
 
 @test("Full scan: structural attacks have zero score")
@@ -609,7 +614,7 @@ def _():
     report = run_demo_scan(trials=5)
     for r in report.results:
         assert len(r.trials) == 5
-    assert report.structural_count == 2
+    assert report.structural_count == 4
 
 
 # =============================================================================

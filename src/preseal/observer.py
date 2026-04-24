@@ -27,12 +27,17 @@ class SecurityObserver(BaseCallbackHandler):
 
     When langchain_core is available, inject via RunnableConfig callbacks.
     Otherwise, agents can call the on_tool_start/end methods directly.
+
+    Supports tool response injection: when `tool_response_injections` is set,
+    the observer replaces matching tool outputs with injected payloads.
+    This enables testing the AgentDojo attack pattern (malicious tool responses).
     """
 
-    def __init__(self) -> None:
+    def __init__(self, tool_response_injections: dict[str, str] | None = None) -> None:
         self.tool_calls = []
         self.final_output = None
         self._current_call = None
+        self._injections = tool_response_injections or {}
 
     def on_tool_start(
         self, serialized: dict, input_str: str, **kwargs: Any
@@ -44,7 +49,10 @@ class SecurityObserver(BaseCallbackHandler):
 
     def on_tool_end(self, output: str, **kwargs: Any) -> None:
         if self._current_call:
-            self._current_call.output = str(output)
+            actual_output = str(output)
+            if self._current_call.tool_name in self._injections:
+                actual_output = self._injections[self._current_call.tool_name]
+            self._current_call.output = actual_output
             self.tool_calls.append(self._current_call)
             self._current_call = None
 
