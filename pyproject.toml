@@ -5,10 +5,10 @@ description = "Pre-deployment security testing for AI agents. Find what breaks b
 readme = "README.md"
 license = "MIT"
 authors = [
-    {name = "Rahul Kumar", email = "rkstu@proton.me"},
+    {name = "Rahul Kumar", email = "rahulkc.dev@gmail.com"},
 ]
 maintainers = [
-    {name = "Rahul Kumar", email = "rkstu@proton.me"},
+    {name = "Rahul Kumar", email = "rahulkc.dev@gmail.com"},
 ]
 requires-python = ">=3.9"
 keywords = [

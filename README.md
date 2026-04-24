@@ -1,7 +1,7 @@
 # preseal
 
-Pre-deployment security testing for AI agents.  
-Find what breaks before your agent reaches production.
+Security testing for AI agents.  
+Test against prompt injection, credential leaks, and scope violations before deployment.
 
 [![PyPI version](https://img.shields.io/pypi/v/preseal)](https://pypi.org/project/preseal/)
 [![Python 3.9+](https://img.shields.io/pypi/pyversions/preseal)](https://pypi.org/project/preseal/)
@@ -10,7 +10,7 @@ Find what breaks before your agent reaches production.
 
 ## What preseal does
 
-**preseal tests your AI agent against real attack patterns and tells you exactly what's vulnerable — across models, prompts, and configurations.**
+Run adversarial attacks against your agent before it reaches production. Catch prompt injection, credential leaks, and scope violations. Get a pass/fail with statistical confidence.
 
 ```bash
 pip install preseal
@@ -83,7 +83,7 @@ preseal compare --demo
   ▲ Goal Decomposition: structural → pass
 ```
 
-This is preseal's unique output. No other tool shows the interaction between **model × prompt × attack**.
+The compare protocol shows the security impact of configuration changes — model swaps, prompt edits, or tool additions — in a single output.
 
 ---
 
