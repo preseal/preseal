@@ -1,6 +1,6 @@
 [project]
 name = "preseal"
-version = "0.5.1"
+version = "0.5.2"
 description = "Pre-deployment security testing for AI agents. Find what breaks before your agent reaches production."
 readme = "README.md"
 license = "MIT"

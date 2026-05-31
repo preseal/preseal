@@ -206,7 +206,7 @@ class AttackResult(BaseModel):
 
 class ScanReport(BaseModel):
     target: str
-    version: str = "0.5.1"
+    version: str = "0.5.2"
     total_attacks: int = 0
     structural_count: int = 0
     stochastic_count: int = 0

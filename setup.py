@@ -3,7 +3,7 @@ from setuptools import setup, find_packages
 
 setup(
     name="preseal",
-    version="0.5.1",
+    version="0.5.2",
     packages=find_packages(where="src"),
     package_dir={"": "src"},
     python_requires=">=3.9",
