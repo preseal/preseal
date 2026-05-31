@@ -346,7 +346,7 @@ def _render_html(data: dict) -> str:
     <p><strong>Result:</strong> <span style="color:{verdict_color};font-weight:bold">{cyber['eu_ai_act_article_15_4']['result']}</span></p>
     <p><strong>Evidence:</strong> {cyber['eu_ai_act_article_15_4']['evidence']}</p>
 
-    <h2>6. Risk Summary (Art. 9)</h2>
+    <h2>6. Risk Summary (Art. 15(4) identified risks)</h2>
     {'<table><thead><tr><th>Risk</th><th>Severity</th><th>Status</th><th>Mitigation</th></tr></thead><tbody>' + risk_rows + '</tbody></table>' if risk_rows else '<p>No unmitigated risks identified.</p>'}
 
     <h2>7. Post-Market Monitoring Guidance (Art. 72)</h2>
