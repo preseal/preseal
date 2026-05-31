@@ -21,12 +21,26 @@ No API keys needed. Run with:
 preseal scan --demo
 ```
 
-## github-workflow.yml
+## CI/CD Integration
 
-Drop into `.github/workflows/agent-security.yml`. Or generate with:
+**Option 1: GitHub Action** (recommended)
+
+See `.github/actions/preseal-scan/action.yml` for the ready-to-use composite action,
+or `.github/workflows/example-preseal.yml` for a complete workflow example with
+PR gate + nightly deep scan.
+
+**Option 2: Generate a workflow template:**
 
 ```bash
 preseal show-workflow > .github/workflows/agent-security.yml
 ```
 
-Runs `preseal audit` (free, instant) on every PR and `preseal diff` (adversarial scan vs baseline) when an API key is configured.
+**Option 3: Minimal inline:**
+
+```yaml
+- run: pip install preseal
+- run: preseal scan --url ${{ vars.AGENT_URL }} --preset openai --ci
+         -H "Authorization: Bearer ${{ secrets.AGENT_KEY }}"
+```
+
+`--ci` enables quick scan + SARIF output + response caching. Exit code 1 blocks merge on structural vulnerabilities.

@@ -5,8 +5,9 @@
 ```bash
 cd preseal
 
-# Unit + integration tests (no API keys, <30s)
-python3 tests/test_comprehensive.py
+# Unit + integration tests (no API keys, <30s, 70 tests total)
+python3 tests/test_comprehensive.py       # 53 tests — models, observer, scorer, scanner, loader
+python3 tests/test_http_adapter.py        # 17 tests — HTTP adapter, presets, extraction, caching
 python3 tests/test_scanner.py
 python3 tests/test_audit.py
 python3 tests/test_e2e_full.py
@@ -26,7 +27,8 @@ python3 tests/test_real_world_scenarios.py
 
 | File | What It Validates |
 |---|---|
-| `test_comprehensive.py` | Models, observer, scorer, scanner, YAML loader, integration |
+| `test_comprehensive.py` | Models, observer, scorer, scanner, YAML loader, integration (53 tests) |
+| `test_http_adapter.py` | HTTP adapter, presets, JSON extraction, trial_id, SSL, caching (17 tests) |
 | `test_scanner.py` | Pass³ verdict logic, scoring correctness |
 | `test_audit.py` | AST extraction, prompt scoring, tool risk, deduplication |
 | `test_e2e_full.py` | All CLI modes end-to-end, exit codes, JSON output |

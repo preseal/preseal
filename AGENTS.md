@@ -5,7 +5,7 @@
 
 ## What preseal is
 
-Preseal is a pre-deployment security testing CLI for AI agents (v0.5.0). It has three modes:
+Preseal is a pre-deployment security testing CLI for AI agents. It has three modes:
 
 - `preseal audit <file.py>` — static analysis of agent config (free, instant, no API keys)
 - `preseal scan --url X` — adversarial testing against any HTTP endpoint (~$0.005 for quick scan, ~2 min)
