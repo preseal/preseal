@@ -12,21 +12,23 @@ Pre-deployment security testing for AI agents. Find prompt injection, credential
 ```bash
 pip install preseal
 
-# OpenAI-compatible agents (FastAPI, vLLM, Ollama, LiteLLM, custom):
+# OpenAI-compatible agents (FastAPI, vLLM, Ollama, LiteLLM, or your own API):
 preseal scan --url https://your-agent.com/v1/chat/completions \
   --preset openai --model gpt-4o-mini \
   -H "Authorization: Bearer $YOUR_API_KEY" --quick
 
-# Anthropic-compatible:
-preseal scan --url https://api.anthropic.com/v1/messages \
+# Anthropic-compatible agents (your own endpoint that uses the Anthropic format):
+preseal scan --url https://your-agent.com/v1/messages \
   --preset anthropic --model claude-sonnet-4-6 \
-  -H "x-api-key: $ANTHROPIC_API_KEY" --quick
+  -H "x-api-key: $YOUR_API_KEY" --quick
 
-# Any custom endpoint:
-preseal scan --url https://my-agent.com/chat \
+# Any custom endpoint shape:
+preseal scan --url https://your-agent.com/chat \
   --body-template '{"input": "{{attack}}"}' \
   --response-path "output.text" --quick
 ```
+
+> **Note:** `--url` should point to **your agent's endpoint**, not directly to a model provider's API (OpenAI, Anthropic, etc.). Preseal tests how your agent behaves under attack, not the underlying model.
 
 **Option B: Scan a Python agent in-process (LangGraph, .invoke())**
 ```bash
@@ -52,7 +54,7 @@ preseal scan --demo
 
 Tests for patterns behind real CVEs: CVE-2025-53773 (GitHub Copilot RCE), CVE-2025-55284 (Claude Code DNS exfil), CVE-2025-54132 (Cursor data exfil).
 
-> **Using an AI assistant?** See [AGENTS.md](AGENTS.md) for step-by-step setup instructions.
+> **Using an AI assistant?** See [AGENTS.md](https://github.com/preseal/preseal/blob/main/AGENTS.md) for step-by-step setup instructions.
 
 ---
 
@@ -208,4 +210,4 @@ Tested with GPT-4o-mini, Claude Sonnet, and Llama-3.1-8B.
 
 ---
 
-[preseal.dev](https://preseal.dev) | [Methodology](https://preseal.org) | [Full spec](METHODOLOGY.md) | [AI setup guide](AGENTS.md)
+[preseal.dev](https://preseal.dev) | [Methodology](https://preseal.org) | [Full spec](https://github.com/preseal/preseal/blob/main/METHODOLOGY.md) | [AI setup guide](https://github.com/preseal/preseal/blob/main/AGENTS.md)
