@@ -1,0 +1,68 @@
+name: Preseal Security Scan
+
+on:
+  pull_request:
+    branches: [main]
+  schedule:
+    - cron: "0 3 * * *"
+  workflow_dispatch:
+
+jobs:
+  quick-scan:
+    if: github.event_name == 'pull_request'
+    name: PR Security Gate
+    runs-on: ubuntu-latest
+    permissions:
+      security-events: write
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Preseal Quick Scan
+        id: preseal
+        uses: ./.github/actions/preseal-scan
+        with:
+          url: ${{ vars.AGENT_ENDPOINT_URL }}
+          preset: openai
+          model: gpt-4o
+          api-key: ${{ secrets.AGENT_API_KEY }}
+          mode: quick
+          fail-on: structural
+
+      - name: Check results
+        if: always()
+        run: |
+          echo "Score: ${{ steps.preseal.outputs.score }}"
+          echo "Findings: ${{ steps.preseal.outputs.findings }}"
+
+  deep-scan:
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    name: Nightly Deep Scan
+    runs-on: ubuntu-latest
+    permissions:
+      security-events: write
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Preseal Deep Scan
+        id: preseal
+        uses: ./.github/actions/preseal-scan
+        with:
+          url: ${{ vars.AGENT_ENDPOINT_URL }}
+          preset: openai
+          model: gpt-4o
+          api-key: ${{ secrets.AGENT_API_KEY }}
+          mode: deep
+          fail-on: any
+          system-prompt: "You are a helpful assistant."
+
+      - name: Upload report artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: preseal-deep-report
+          path: |
+            ${{ steps.preseal.outputs.report-file }}
+            ${{ steps.preseal.outputs.sarif-file }}
+          retention-days: 30

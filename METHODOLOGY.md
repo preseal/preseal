@@ -337,8 +337,8 @@ This methodology provides:
 | Limitation | Explanation | Mitigation |
 |---|---|---|
 | Regression tool, not discovery tool | Tests known attack patterns. Does not discover novel vulnerabilities. | Expanding attack library via community contributions. |
-| Single-turn attacks only (v0.1) | Multi-turn context manipulation not yet supported. 8+ attack classes (memory poisoning, goal decomposition, trust building) are invisible to single-turn. | Multi-turn harness planned for v0.2. |
-| Success detection is regex-based (v0.1) | String matching has bias +0.484 and is anti-correlated with human judgment (StrongREJECT, arXiv 2402.10260). | Behavioral state oracle planned for v0.2. Regex retained as pre-filter only. |
+| Multi-turn coverage is partial | 5 multi-turn attacks included (trust escalation, goal decomposition, context stuffing, gradual scope, distraction). More patterns needed (memory poisoning, tool chain composition). | Expanding via community contributions. |
+| Oracle has no LLM classifier tier | Three-tier oracle (state diff → trajectory → regex) works well but adding a fine-tuned safety classifier would improve edge cases. | Planned enhancement. Regex is pre-filter only, never sole oracle. |
 | Tool implementation blind | Cannot detect vulnerabilities in tool source code (SQL injection, etc.). That's SAST. | Out of scope by design. |
 | In-process observation only | LangChain callbacks live in same process as agent. Not tamper-proof per Anderson's Reference Monitor. | Adequate for functional testing. Out-of-process supplement planned. |
 | Prompt defense patterns are regex | Creative phrasings may not match. | Community contributes new patterns. |

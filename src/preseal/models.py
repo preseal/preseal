@@ -101,6 +101,9 @@ class AttackDefinition(BaseModel):
     tool_response_injections: List[ToolResponseInjection] = Field(default_factory=list)
     success_condition: Optional[SuccessCondition] = None
     postconditions: List[Postcondition] = Field(default_factory=list)
+    atr_ids: List[str] = Field(default_factory=list)
+    cve: Optional[str] = None
+    cve_context: Optional[str] = None
 
     @property
     def is_multi_turn(self) -> bool:
@@ -116,16 +119,40 @@ class TrialResult(BaseModel):
     attack_succeeded: bool
     postcondition_passed: bool
     attack_reason: str = ""
-    trajectory: Trajectory
+    trajectory: Trajectory = Field(default_factory=Trajectory)
     score: Optional[DimensionScores] = None
 
 
-_OWASP_MAP = {
+_OWASP_LLM_MAP = {
     "injection": "LLM01 (Prompt Injection)",
     "exfiltration": "LLM02 (Sensitive Info Disclosure)",
     "tool_abuse": "LLM06 (Excessive Agency)",
     "scope_violation": "LLM06 (Excessive Agency)",
     "omission": "—",
+}
+
+_OWASP_AGENTIC_MAP = {
+    "injection": ["T2 (Tool Misuse)", "T6 (Intent Breaking & Goal Manipulation)", "T16 (Insecure Inter-Agent Protocol Abuse)"],
+    "exfiltration": ["T2 (Tool Misuse)", "T3 (Privilege Compromise)"],
+    "tool_abuse": ["T2 (Tool Misuse)", "T3 (Privilege Compromise)", "T11 (Unexpected RCE & Code Attacks)"],
+    "scope_violation": ["T3 (Privilege Compromise)", "T11 (Unexpected RCE & Code Attacks)"],
+    "omission": ["T8 (Repudiation & Untraceability)"],
+}
+
+_EU_AI_ACT_MAP = {
+    "injection": "Art. 15(4) — Resilience against adversarial inputs designed to cause mistakes",
+    "exfiltration": "Art. 15(4) — Resilience against confidentiality attacks; Art. 10 — Data governance",
+    "tool_abuse": "Art. 15(4) — Resilience against exploitation of system vulnerabilities",
+    "scope_violation": "Art. 15(1) — Appropriate levels of accuracy and robustness; Art. 15(4) — Resilience against unauthorized use alteration",
+    "omission": "Art. 15(3) — Resilience against errors, faults, and inconsistencies",
+}
+
+_NIST_AML_MAP = {
+    "injection": "AML.T0051 (LLM Prompt Injection); AML.T0043 (Craft Adversarial Data)",
+    "exfiltration": "AML.T0024 (Exfiltration via ML Inference API); AML.T0040 (ML Model Inference API Access)",
+    "tool_abuse": "AML.T0048 (Command and Control via ML Models)",
+    "scope_violation": "AML.T0048 (Command and Control via ML Models)",
+    "omission": "AML.T0034 (Undermine ML Model Integrity)",
 }
 
 _FIX_SUGGESTIONS = {
@@ -135,6 +162,9 @@ _FIX_SUGGESTIONS = {
     "scope_violation": 'Add to system prompt: "Only access files/resources within [allowed_paths]. NEVER access system files or paths outside your workspace."',
     "omission": "Add input validation before dangerous actions. Implement postcondition checks for required security actions.",
 }
+
+# Backwards-compatible alias
+_OWASP_MAP = _OWASP_LLM_MAP
 
 
 class AttackResult(BaseModel):
@@ -150,7 +180,19 @@ class AttackResult(BaseModel):
 
     @property
     def owasp_id(self) -> str:
-        return _OWASP_MAP.get(self.attack.category.value, "—")
+        return _OWASP_LLM_MAP.get(self.attack.category.value, "—")
+
+    @property
+    def owasp_agentic_ids(self) -> list[str]:
+        return _OWASP_AGENTIC_MAP.get(self.attack.category.value, [])
+
+    @property
+    def eu_ai_act_ref(self) -> str:
+        return _EU_AI_ACT_MAP.get(self.attack.category.value, "")
+
+    @property
+    def nist_aml_ref(self) -> str:
+        return _NIST_AML_MAP.get(self.attack.category.value, "")
 
     @property
     def fix_suggestion(self) -> str:
@@ -164,7 +206,7 @@ class AttackResult(BaseModel):
 
 class ScanReport(BaseModel):
     target: str
-    version: str = "0.3.0"
+    version: str = "0.5.0"
     total_attacks: int = 0
     structural_count: int = 0
     stochastic_count: int = 0

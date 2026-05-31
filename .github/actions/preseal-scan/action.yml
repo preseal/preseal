@@ -1,0 +1,158 @@
+name: "Preseal AI Agent Security Scan"
+description: "Adversarial security testing for AI agents with statistical rigor (Pass³). Tests for prompt injection, data exfiltration, and tool abuse patterns linked to real CVEs."
+author: "AgentBeats"
+
+branding:
+  icon: "shield"
+  color: "purple"
+
+inputs:
+  url:
+    description: "HTTP endpoint URL to scan"
+    required: true
+  preset:
+    description: "Protocol preset (openai, anthropic, a2a, ollama)"
+    required: false
+    default: "openai"
+  model:
+    description: "Model name for the preset"
+    required: false
+  api-key:
+    description: "API key for the agent endpoint"
+    required: true
+  mode:
+    description: "Scan mode: quick (PR gate) or deep (nightly)"
+    required: false
+    default: "quick"
+  fail-on:
+    description: "Failure threshold: structural (exit 1 on structural only) or any (exit 1 on any finding)"
+    required: false
+    default: "structural"
+  system-prompt:
+    description: "System prompt to include in requests"
+    required: false
+
+outputs:
+  score:
+    description: "Overall security score (0.000 to 1.000)"
+    value: ${{ steps.scan.outputs.score }}
+  findings:
+    description: "Number of findings"
+    value: ${{ steps.scan.outputs.findings }}
+  sarif-file:
+    description: "Path to SARIF output file"
+    value: ${{ steps.scan.outputs.sarif-file }}
+  report-file:
+    description: "Path to JSON report"
+    value: ${{ steps.scan.outputs.report-file }}
+
+runs:
+  using: "composite"
+  steps:
+    - name: Set up Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: "3.11"
+
+    - name: Install Preseal
+      shell: bash
+      run: pip install "preseal>=0.5.0"
+
+    - name: Check endpoint reachability
+      id: reachability
+      shell: bash
+      run: |
+        if curl -sf --max-time 10 -o /dev/null "${{ inputs.url }}"; then
+          echo "reachable=true" >> "$GITHUB_OUTPUT"
+        else
+          echo "reachable=false" >> "$GITHUB_OUTPUT"
+          echo "::warning::Agent endpoint ${{ inputs.url }} is not reachable. Skipping scan."
+        fi
+
+    - name: Run Preseal scan
+      id: scan
+      if: steps.reachability.outputs.reachable == 'true'
+      shell: bash
+      env:
+        PRESEAL_API_KEY: ${{ inputs.api-key }}
+      run: |
+        REPORT_DIR="${{ runner.temp }}/preseal"
+        mkdir -p "$REPORT_DIR"
+        REPORT_FILE="$REPORT_DIR/preseal-report.json"
+        SARIF_FILE="$REPORT_DIR/preseal.sarif"
+
+        CMD="python -m preseal scan"
+        CMD="$CMD --url '${{ inputs.url }}'"
+        CMD="$CMD --preset ${{ inputs.preset }}"
+        CMD="$CMD -H 'Authorization: Bearer $PRESEAL_API_KEY'"
+        CMD="$CMD --ci"
+        CMD="$CMD --no-verify-ssl"
+
+        if [ -n "${{ inputs.model }}" ]; then
+          CMD="$CMD --model '${{ inputs.model }}'"
+        fi
+
+        if [ -n "${{ inputs.system-prompt }}" ]; then
+          CMD="$CMD --system-prompt '${{ inputs.system-prompt }}'"
+        fi
+
+        if [ "${{ inputs.mode }}" = "deep" ]; then
+          CMD="$CMD --deep"
+        fi
+
+        set +e
+        eval $CMD > "$REPORT_FILE" 2>&1
+        EXIT_CODE=$?
+        set -e
+
+        python -m preseal report --scan "$REPORT_FILE" --format sarif > "$SARIF_FILE" 2>/dev/null || true
+
+        SCORE=$(python -c "import json; r=json.load(open('$REPORT_FILE')); print(f\"{r.get('score', 0.0):.3f}\")" 2>/dev/null || echo "0.000")
+        FINDINGS=$(python -c "import json; r=json.load(open('$REPORT_FILE')); print(len(r.get('findings', [])))" 2>/dev/null || echo "0")
+
+        echo "score=$SCORE" >> "$GITHUB_OUTPUT"
+        echo "findings=$FINDINGS" >> "$GITHUB_OUTPUT"
+        echo "sarif-file=$SARIF_FILE" >> "$GITHUB_OUTPUT"
+        echo "report-file=$REPORT_FILE" >> "$GITHUB_OUTPUT"
+
+        if [ "${{ inputs.fail-on }}" = "any" ] && [ $EXIT_CODE -ne 0 ]; then
+          exit 1
+        elif [ "${{ inputs.fail-on }}" = "structural" ] && [ $EXIT_CODE -eq 1 ]; then
+          exit 1
+        fi
+
+    - name: Post scan summary
+      if: steps.reachability.outputs.reachable == 'true' && always()
+      shell: bash
+      run: |
+        SCORE="${{ steps.scan.outputs.score }}"
+        FINDINGS="${{ steps.scan.outputs.findings }}"
+        MODE="${{ inputs.mode }}"
+
+        if [ "$SCORE" = "" ]; then
+          SCORE="N/A"
+          FINDINGS="N/A"
+        fi
+
+        cat >> "$GITHUB_STEP_SUMMARY" <<EOF
+        ## Preseal Security Scan Results
+
+        | Metric | Value |
+        |--------|-------|
+        | Score | \`$SCORE\` |
+        | Findings | \`$FINDINGS\` |
+        | Mode | \`$MODE\` |
+        | Endpoint | \`${{ inputs.url }}\` |
+        | Preset | \`${{ inputs.preset }}\` |
+
+        Full report: \`${{ steps.scan.outputs.report-file }}\`
+        SARIF: \`${{ steps.scan.outputs.sarif-file }}\`
+        EOF
+
+    - name: Upload SARIF to GitHub Security
+      if: steps.reachability.outputs.reachable == 'true' && steps.scan.outputs.sarif-file != ''
+      uses: github/codeql-action/upload-sarif@v3
+      with:
+        sarif_file: ${{ steps.scan.outputs.sarif-file }}
+        category: preseal
+      continue-on-error: true

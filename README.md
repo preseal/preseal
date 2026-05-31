@@ -6,22 +6,51 @@ Pre-deployment security testing for AI agents. Find prompt injection, credential
 [![Python 3.9+](https://img.shields.io/pypi/pyversions/preseal)](https://pypi.org/project/preseal/)
 [![License: MIT](https://img.shields.io/github/license/preseal/preseal)](https://github.com/preseal/preseal/blob/main/LICENSE)
 
-## Get started
+## Quickstart — scan any AI agent in 60 seconds
 
+**Option A: Scan any HTTP endpoint (most common)**
 ```bash
 pip install preseal
-preseal scan --demo        # see it work — no API keys needed
+
+# OpenAI-compatible agents (FastAPI, vLLM, Ollama, LiteLLM, custom):
+preseal scan --url https://your-agent.com/v1/chat/completions \
+  --preset openai --model gpt-4o-mini \
+  -H "Authorization: Bearer $YOUR_API_KEY" --quick
+
+# Anthropic-compatible:
+preseal scan --url https://api.anthropic.com/v1/messages \
+  --preset anthropic --model claude-sonnet-4-6 \
+  -H "x-api-key: $ANTHROPIC_API_KEY" --quick
+
+# Any custom endpoint:
+preseal scan --url https://my-agent.com/chat \
+  --body-template '{"input": "{{attack}}"}' \
+  --response-path "output.text" --quick
 ```
 
-## Set up in your project
-
+**Option B: Scan a Python agent in-process (LangGraph, .invoke())**
 ```bash
-preseal init                                     # detects your agent, verifies API key
-preseal scan --target my_module:agent --quick     # 10 key attacks in ~2 min
-preseal scan --target my_module:agent --save-baseline   # full 57-attack scan
+pip install preseal
+preseal scan --target my_agent:create_agent --quick   # 10 attacks, ~2 min
 ```
 
-preseal imports your agent and calls `.invoke()` — it works with **any LLM provider** (OpenAI, Anthropic, Google, Ollama, Azure, Groq, Mistral). Set whichever API key your agent uses. No key needed for `preseal audit` or `preseal scan --demo`.
+**Option C: See it work first (no API key needed)**
+```bash
+pip install preseal
+preseal scan --demo
+```
+
+### Protocol presets
+
+| Preset | Covers | Command |
+|--------|--------|---------|
+| `openai` | OpenAI, vLLM, Ollama, LiteLLM, most custom agents | `--preset openai` |
+| `anthropic` | Anthropic Claude API | `--preset anthropic` |
+| `a2a` | Google A2A protocol (auto-discovers via `/.well-known/agent.json`) | `--preset a2a` |
+| `ollama` | Ollama local models | `--preset ollama` |
+| (custom) | Any JSON API | `--body-template '...' --response-path '...'` |
+
+Tests for patterns behind real CVEs: CVE-2025-53773 (GitHub Copilot RCE), CVE-2025-55284 (Claude Code DNS exfil), CVE-2025-54132 (Cursor data exfil).
 
 > **Using an AI assistant?** See [AGENTS.md](AGENTS.md) for step-by-step setup instructions.
 
@@ -74,14 +103,19 @@ Shows the security impact of model swaps, prompt edits, or tool changes in a sin
 
 | Command | What it does | Cost |
 |---|---|---|
-| `preseal scan --demo` | Attacks against built-in demo agents | $0 |
-| `preseal scan --target m:obj --quick` | Fast scan — 10 key attacks | ~$0.08 |
-| `preseal scan --target m:obj` | Full scan — 57 attacks | ~$0.50 |
+| `preseal scan --demo` | Demo — no API key, see it work in seconds | $0 |
+| `preseal scan --url X --preset openai --quick` | Quick scan — any HTTP endpoint, 10 attacks | ~$0.005 |
+| `preseal scan --url X --preset openai` | Full scan — any HTTP endpoint, 57 attacks | ~$0.05 |
+| `preseal scan --url X --preset openai --ci` | CI gate — quick scan + SARIF output | ~$0.005 |
+| `preseal scan --target m:obj --quick` | Quick scan — Python .invoke() agent | ~$0.005 |
 | `preseal audit agent.py` | Static analysis — prompt, tools, config | $0 |
-| `preseal compare --demo` | Compare vulnerable vs secure agent | $0 |
-| `preseal diff --target m:obj` | Regression check vs saved baseline | ~$0.50 |
-| `preseal init` | Set up preseal in your project | $0 |
+| `preseal compare --demo` | Model swap safety — see what changed | $0 |
+| `preseal report --scan report.json --format pdf` | EU AI Act Annex IV §5-6 conformity evidence | $0 |
+| `preseal diff --target m:obj` | Regression check vs saved baseline | ~$0.05 |
+| `preseal init` | Set up preseal, creates agent template | $0 |
 | `preseal doctor` | Diagnose setup issues | $0 |
+
+Cost estimates based on GPT-4o-mini at current pricing. Higher-capability models cost more.
 
 ---
 
@@ -99,12 +133,23 @@ jobs:
       - uses: actions/setup-python@v5
         with: { python-version: '3.11' }
       - run: pip install preseal
-      - run: preseal audit ./src/agent.py
-      - if: env.OPENAI_API_KEY || env.ANTHROPIC_API_KEY
-        env:
-          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
-          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
-        run: preseal diff --target src.agent:agent
+      # Quick scan (PR gate — ~2 min, caching enabled, SARIF output)
+      - run: preseal scan --url ${{ vars.AGENT_URL }} --preset openai
+             --ci -H "Authorization: Bearer ${{ secrets.AGENT_API_KEY }}"
+      # Upload to GitHub Security tab
+      - uses: github/codeql-action/upload-sarif@v3
+        if: always()
+        with: { sarif_file: preseal-report.sarif }
+```
+
+For nightly deep scans (57 attacks × 10 trials):
+```yaml
+on:
+  schedule: [{ cron: '0 3 * * *' }]
+steps:
+  - run: preseal scan --url ${{ vars.AGENT_URL }} --preset openai
+         --ci --deep -H "Authorization: Bearer ${{ secrets.AGENT_API_KEY }}"
+  - run: preseal report --scan ./preseal-report.json --format html
 ```
 
 Exit codes: `0` = pass, `1` = structural vulnerability, `2` = warnings only.
@@ -127,19 +172,37 @@ All attacks are YAML — add your own in `attacks/` or `.preseal/attacks/`.
 
 ---
 
-## Supported agents
+## Agent interface
+
+preseal calls `agent.invoke({"messages": [("user", "<attack>")]})` and expects back `{"messages": [...]}`.
+
+**Three patterns work:**
 
 ```python
-# LangGraph (auto-detected)
-agent = create_react_agent(llm, tools, checkpointer=checkpointer)
+# 1. LangGraph graph (auto-detected)
+from langgraph.prebuilt import create_react_agent
+agent = create_react_agent(llm, tools)
+# target: my_module:agent
 
-# Any object with .invoke()
+# 2. Class with .invoke()  ← most common
 class MyAgent:
-    def invoke(self, input: dict, config: dict = None) -> dict: ...
+    def invoke(self, input: dict, config=None) -> dict:
+        user_text = input["messages"][-1][1]  # ("user", "text")
+        response = self.llm.invoke(user_text)
+        return {"messages": [AIMessage(content=response)]}
 
-# Plain callable
-def my_agent(task: str) -> str: ...
+agent = MyAgent()
+# target: my_module:agent
+
+# 3. Factory function (no args) → returns agent  ← use for fresh state per trial
+def create_agent() -> MyAgent:
+    return MyAgent()
+# target: my_module:create_agent
 ```
+
+> **Note:** A plain function like `def agent(text: str) -> str` does **not** work — preseal needs `.invoke()` or a factory that returns an object with `.invoke()`.
+
+Run `preseal init` and preseal creates `preseal_agent_example.py` as a starter template.
 
 Tested with GPT-4o-mini, Claude Sonnet, and Llama-3.1-8B.
 

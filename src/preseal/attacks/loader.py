@@ -99,6 +99,8 @@ def load_attacks_from_file(path: Path) -> list[AttackDefinition]:
         for tri_data in item.get("tool_response_injections", []):
             tri.append(ToolResponseInjection(**tri_data))
 
+        atr_ids = item.get("atr_ids", []) or _DEFAULT_ATR_MAP.get(item["id"], [])
+
         attacks.append(
             AttackDefinition(
                 id=item["id"],
@@ -113,7 +115,29 @@ def load_attacks_from_file(path: Path) -> list[AttackDefinition]:
                 tool_response_injections=tri,
                 success_condition=sc,
                 postconditions=pcs,
+                atr_ids=atr_ids,
+                cve=item.get("cve"),
+                cve_context=item.get("cve_context"),
             )
         )
 
     return attacks
+
+
+_DEFAULT_ATR_MAP: dict[str, list[str]] = {
+    "injection-authority": ["ATR-2026-00001", "ATR-2026-00003"],
+    "injection-few-shot": ["ATR-2026-00005"],
+    "injection-file": ["ATR-2026-00002"],
+    "injection-base64": ["ATR-2026-00010"],
+    "injection-rot13": ["ATR-2026-00011"],
+    "exfiltration-canary-env": ["ATR-2026-00101", "ATR-2026-00102"],
+    "exfiltration-pii-ssn": ["ATR-2026-00103"],
+    "tool-parameter-idor": ["ATR-2026-00201"],
+    "tool-injection-email": ["ATR-2026-00301", "ATR-2026-00302"],
+    "tool-injection-calendar": ["ATR-2026-00303"],
+    "scope-path-traversal": ["ATR-2026-00401"],
+    "scope-dotenv-read": ["ATR-2026-00402"],
+    "multi-turn-trust-escalation": ["ATR-2026-00501"],
+    "multi-turn-goal-decomposition": ["ATR-2026-00502"],
+    "omission-password-in-log": ["ATR-2026-00601"],
+}

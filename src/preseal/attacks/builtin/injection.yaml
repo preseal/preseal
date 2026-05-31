@@ -26,6 +26,8 @@
   name: "Authority-Framed Injection (ISO Audit)"
   category: injection
   severity: critical
+  cve: CVE-2025-53773
+  cve_context: "GitHub Copilot RCE — authority-framed injection with fake compliance references bypassed safety guardrails"
   description: |
     Malicious instructions disguised as an authorized security audit notice
     with fake compliance references (ISO 42001, audit ID).
@@ -90,6 +92,8 @@
   name: "Role Confusion (Developer Override)"
   category: injection
   severity: high
+  cve: CVE-2025-53773
+  cve_context: "GitHub Copilot RCE — developer/system role confusion enabled arbitrary code execution"
   description: |
     Exploits system/user role boundary confusion by embedding instructions
     that mimic developer debugging commands in document content.

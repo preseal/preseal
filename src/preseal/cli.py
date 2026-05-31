@@ -26,6 +26,16 @@ def scan(
     target: str = typer.Option(
         "", help="Agent target as module:object (e.g., my_agent:agent)"
     ),
+    url: str = typer.Option("", help="HTTP endpoint URL to scan (alternative to --target)"),
+    preset: str = typer.Option("", help="Protocol preset: openai, anthropic, a2a, ollama (auto-configures body/response)"),
+    model: str = typer.Option("", help="Model name for --preset (e.g., gpt-4o-mini, claude-sonnet-4-6)"),
+    system_prompt: str = typer.Option("", "--system-prompt", help="System prompt to include in requests (for --preset)"),
+    method: str = typer.Option("POST", help="HTTP method for --url (default POST)"),
+    headers: list[str] = typer.Option([], "--header", "-H", help="HTTP headers for --url (format: 'Key: Value', repeatable)"),
+    body_template: str = typer.Option("", "--body-template", help='JSON body template with {{attack}} placeholder'),
+    response_path: str = typer.Option("", "--response-path", help="Dot-notation path to extract response (e.g., choices.0.message.content)"),
+    no_verify_ssl: bool = typer.Option(False, "--no-verify-ssl", help="Disable TLS certificate verification (for local dev only)"),
+    timeout: int = typer.Option(30, help="HTTP request timeout in seconds"),
     demo: bool = typer.Option(False, help="Run against built-in vulnerable demo agent"),
     quick: bool = typer.Option(False, help="Fast scan: 10 key attacks × 3 trials (~60s with LLM)"),
     output: str = typer.Option(
@@ -34,11 +44,25 @@ def scan(
     trials: int = typer.Option(0, help="Trials per attack (0 = auto: 3 for quick, 10 for full)"),
     concurrency: int = typer.Option(5, help="Parallel trials per attack (default 5)"),
     save_baseline: bool = typer.Option(False, "--save-baseline", help="Save result as baseline for future diff"),
+    sarif: bool = typer.Option(False, "--sarif", help="Also output SARIF for GitHub/GitLab CI annotations"),
+    ci: bool = typer.Option(False, "--ci", help="CI mode: enables --quick --sarif --cache, minimal output, clean exit codes"),
+    deep: bool = typer.Option(False, "--deep", help="With --ci: full scan (57 attacks × 10 trials) instead of quick"),
+    no_cache: bool = typer.Option(False, "--no-cache", help="Disable response caching (even in CI mode)"),
 ) -> None:
     """Scan an AI agent for security vulnerabilities using Pass³ methodology."""
 
-    if not demo and not target:
-        console.print("[red]Error: provide --target or use --demo[/red]")
+    # --ci mode sets sensible CI defaults
+    use_cache = False
+    if ci:
+        sarif = True
+        use_cache = True
+        if not deep:
+            quick = True
+    if no_cache:
+        use_cache = False
+
+    if not demo and not target and not url:
+        console.print("[red]Error: provide --target, --url, or use --demo[/red]")
         raise typer.Exit(1)
 
     if trials == 0:
@@ -46,6 +70,18 @@ def scan(
 
     if demo:
         report = _run_demo_scan(output, trials)
+    elif url:
+        report = _run_url_scan(
+            url=url, method=method, headers=headers,
+            body_template=body_template or None,
+            response_path=response_path or None,
+            timeout=timeout, output=output, trials=trials,
+            concurrency=concurrency, quick=quick,
+            preset=preset or None, model=model or None,
+            system_prompt=system_prompt or None,
+            verify_ssl=not no_verify_ssl,
+            use_cache=use_cache,
+        )
     else:
         report = _run_target_scan(target, output, trials, concurrency, quick)
 
@@ -54,10 +90,18 @@ def scan(
         path = _save(report)
         console.print(f"[dim]Baseline saved to: {path}[/dim]")
 
+    if sarif and report:
+        from .sarif import generate_sarif
+        sarif_path = generate_sarif(report, output_path=output.replace(".json", ""))
+        console.print(f"[dim]SARIF output: {sarif_path}[/dim]")
+
     if report:
-        if quick and report.structural_count > 0:
+        if quick and report.structural_count > 0 and not demo:
             console.print(f"\n[dim]Quick scan found issues. Run full scan for complete coverage:[/dim]")
             console.print(f"[dim]  preseal scan --target {target}[/dim]")
+        if demo:
+            # Demo always exits 0 — it's a demonstration, not a gate
+            return
         if report.structural_count > 0:
             raise typer.Exit(1)
         elif report.stochastic_count > 0:
@@ -180,7 +224,9 @@ def audit(
     else:
         console.print("  [green]GOOD: Basic security patterns detected.[/green]")
 
-    console.print(f"\n  [dim]Run `preseal scan --target {file}:agent` for adversarial testing.[/dim]")
+    module_name = Path(file).stem.replace("/", ".").replace("\\", ".")
+    console.print(f"\n  [dim]Run `preseal scan --target {module_name}:agent` for adversarial testing.[/dim]")
+    console.print(f"  [dim]Replace 'agent' with your actual callable or class name.[/dim]")
 
     if result.high_count > 0:
         raise typer.Exit(1)
@@ -305,6 +351,79 @@ def _output_compare(report) -> None:
 
 
 @app.command()
+def report(
+    scan_report_path: str = typer.Option(
+        "./preseal-report.json", "--scan", help="Path to preseal scan JSON report"
+    ),
+    audit_file_path: str = typer.Option(
+        "", "--audit-file", help="Python file to include static audit results"
+    ),
+    format: str = typer.Option(
+        "html", help="Output format: json, html, or pdf"
+    ),
+    output: str = typer.Option(
+        "./preseal-conformity-report", help="Output path (extension added automatically)"
+    ),
+) -> None:
+    """Generate EU AI Act Annex IV §5 conformity report from scan results."""
+    from .report import generate_report
+
+    scan_path = Path(scan_report_path)
+    if not scan_path.exists():
+        console.print(f"[red]Scan report not found: {scan_report_path}[/red]")
+        console.print("[dim]Run `preseal scan` first, then `preseal report`.[/dim]")
+        raise typer.Exit(1)
+
+    scan_data = json.loads(scan_path.read_text())
+    scan = ScanReport.model_validate(scan_data)
+
+    audit_result = None
+    if audit_file_path:
+        from .audit import audit_file as _audit
+        audit_result = _audit(audit_file_path)
+
+    console.print(f"[bold]Generating conformity report...[/bold]")
+    try:
+        result_path = generate_report(
+            scan_report=scan,
+            audit_result=audit_result,
+            format=format,
+            output_path=output,
+        )
+        console.print(f"[green]✓[/green] Report written to: {result_path}")
+        console.print(f"[dim]Format: {format} | Covers: Art. 15(4), OWASP Agentic AI, NIST AI 100-2[/dim]")
+    except RuntimeError as e:
+        console.print(f"[yellow]{e}[/yellow]")
+        raise typer.Exit(1)
+
+
+@app.command(name="monitor-plan")
+def monitor_plan(
+    scan_report_path: str = typer.Option(
+        "", "--scan", help="Path to preseal scan JSON report (for baseline data)"
+    ),
+    output: str = typer.Option(
+        "./preseal-monitor-plan.md", help="Output path for the PMM plan"
+    ),
+) -> None:
+    """Generate EU AI Act Article 72 Post-Market Monitoring plan."""
+    from .monitor_plan import generate_monitor_plan
+
+    scan = None
+    if scan_report_path:
+        scan_path = Path(scan_report_path)
+        if scan_path.exists():
+            scan_data = json.loads(scan_path.read_text())
+            scan = ScanReport.model_validate(scan_data)
+        else:
+            console.print(f"[yellow]Scan report not found: {scan_report_path}. Generating template without baseline.[/yellow]")
+
+    result_path = generate_monitor_plan(scan_report=scan, output_path=output)
+    console.print(f"[green]✓[/green] Post-Market Monitoring plan: {result_path}")
+    console.print("[dim]Covers: Art. 72 (PMM), Art. 73 (incident reporting), Art. 12 (record-keeping)[/dim]")
+
+
+@app.command()
 def init(
     path: str = typer.Argument(".", help="Project root directory"),
 ) -> None:
@@ -340,6 +459,41 @@ def init(
     else:
         console.print("  [yellow]No agents found.[/yellow] preseal needs a Python object with .invoke() or a callable.")
         console.print("  [dim]Point preseal at your agent: preseal scan --target my_module:my_agent[/dim]")
+        # Create an agent template to show the expected interface
+        template_path = root / "preseal_agent_example.py"
+        if not template_path.exists():
+            template_path.write_text(
+                '# preseal agent template — shows the .invoke() interface preseal expects\n'
+                '# Replace this with your real agent.\n'
+                '#\n'
+                '# preseal scan --target preseal_agent_example:create_agent --quick\n'
+                '\n'
+                'from langchain_core.messages import AIMessage\n'
+                '\n'
+                '\n'
+                'class MyAgent:\n'
+                '    """Minimal agent skeleton preseal can scan.\n'
+                '\n'
+                '    preseal calls: agent.invoke({"messages": [("user", "<attack>")]})\n'
+                '    and expects:   {"messages": [AIMessage(content="...")]}\n'
+                '    """\n'
+                '\n'
+                '    def invoke(self, input: dict, config=None) -> dict:\n'
+                '        messages = input.get("messages", [])\n'
+                '        last = messages[-1] if messages else ("user", "")\n'
+                '        user_text = last[1] if isinstance(last, tuple) else last.content\n'
+                '\n'
+                '        # TODO: replace with your real LLM call\n'
+                '        response = f"You asked: {user_text}"\n'
+                '\n'
+                '        return {"messages": [AIMessage(content=response)]}\n'
+                '\n'
+                '\n'
+                'def create_agent() -> MyAgent:\n'
+                '    """Factory function — preseal calls this to get a fresh agent per trial."""\n'
+                '    return MyAgent()\n'
+            )
+            console.print(f"  [green]Created[/green] preseal_agent_example.py — adapt this to your agent")
 
     if info.providers:
         for prov in info.providers:
@@ -358,6 +512,18 @@ def init(
 
     # 3. Generate config
     config_path = preseal_dir / "config.yaml"
+    # Create .env.example if it doesn't exist
+    env_example = root / ".env.example"
+    if not env_example.exists():
+        env_example.write_text(
+            "# Copy to .env and fill in your API key\n"
+            "# preseal scan uses whichever key your agent uses\n"
+            "OPENAI_API_KEY=sk-...\n"
+            "# ANTHROPIC_API_KEY=sk-ant-...\n"
+            "# GOOGLE_API_KEY=...\n"
+        )
+        console.print(f"[green]Created[/green] .env.example")
+
     if not config_path.exists():
         target = info.agents[0].target if info.agents else "my_module:my_agent"
         config_content = f"""# preseal project configuration
@@ -436,16 +602,20 @@ ci:
         console.print(f"  {step}. Export your API key:  [bold]export OPENAI_API_KEY=sk-...[/bold]  (or ANTHROPIC_API_KEY, etc.)")
         step += 1
 
-    if agent_verified:
-        console.print(f"  {step}. Quick scan (~60s): [bold]preseal scan --target {target_hint} --quick[/bold]")
-    else:
-        console.print(f"  {step}. Quick scan (~60s): [bold]preseal scan --target {target_hint} --quick[/bold]")
+    if not info.agents:
+        console.print(f"  {step}. Adapt [bold]preseal_agent_example.py[/bold] to your agent, then:")
+        step += 1
+        target_hint = "preseal_agent_example:create_agent"
+
+    console.print(f"  {step}. Quick scan (~2 min): [bold]preseal scan --target {target_hint} --quick[/bold]")
     step += 1
-    console.print(f"  {step}. Full scan + save:  [bold]preseal scan --target {target_hint} --save-baseline[/bold]")
+    console.print(f"  {step}. Full scan + save:    [bold]preseal scan --target {target_hint} --save-baseline[/bold]")
     step += 1
 
     if not info.has_ci_workflow:
-        console.print(f"  {step}. Add to CI:         [bold]preseal show-workflow > .github/workflows/agent-security.yml[/bold]")
+        console.print(f"  {step}. Add to CI:           [bold]preseal show-workflow > .github/workflows/agent-security.yml[/bold]")
+
+    console.print(f"\n  [dim]Agent interface docs: https://preseal.dev#agent-interface[/dim]")
 
     console.print()
 
@@ -586,6 +756,113 @@ def version() -> None:
     console.print(f"preseal v{__version__}")
 
 
+def _run_url_scan(
+    url: str, method: str, headers: list[str],
+    body_template: str | None, response_path: str | None,
+    timeout: int, output: str, trials: int, concurrency: int, quick: bool,
+    preset: str | None = None, model: str | None = None,
+    system_prompt: str | None = None, verify_ssl: bool = True,
+    use_cache: bool = False,
+) -> "ScanReport":
+    """Run scan against an HTTP endpoint."""
+    import time
+    from uuid import uuid4
+    from rich.progress import Progress, SpinnerColumn, TextColumn, BarColumn
+
+    from .http_adapter import create_http_agent
+    from .scanner import verify_agent, run_scan, QUICK_ATTACK_IDS
+    from .attacks.loader import load_default_attacks
+
+    agent = create_http_agent(
+        url=url, method=method, headers=headers,
+        body_template=body_template, response_path=response_path,
+        timeout=timeout, preset=preset, model=model,
+        system_prompt=system_prompt, verify_ssl=verify_ssl,
+        use_cache=use_cache,
+    )
+
+    console.print(f"[bold]preseal v{__version__}[/bold]")
+    console.print(f"[dim]Target: {url}[/dim]")
+    console.print("[dim]Verifying endpoint responds...[/dim]")
+
+    ok, err = verify_agent(agent)
+    if not ok:
+        console.print(f"[red]Endpoint verification failed: {err}[/red]")
+        console.print("[dim]Check URL, headers, and that the endpoint is running.[/dim]")
+        raise typer.Exit(1)
+    console.print("[green]✓[/green] Endpoint verified\n")
+
+    all_attacks = load_default_attacks()
+    canary_tokens = [f"CANARY_PRESEAL_{uuid4().hex[:12]}" for _ in range(2)]
+
+    if quick:
+        attacks = [a for a in all_attacks if a.id in QUICK_ATTACK_IDS]
+        if not attacks:
+            attacks = all_attacks[:10]
+        mode_label = f"quick scan ({len(attacks)} attacks × {trials} trials)"
+    else:
+        attacks = all_attacks
+        mode_label = f"full scan ({len(attacks)} attacks × {trials} trials)"
+
+    total_calls = len(attacks) * trials
+    console.print(f"[dim]Running {mode_label} (~{total_calls} HTTP calls, concurrency={concurrency})[/dim]\n")
+
+    t_start = time.time()
+    is_tty = hasattr(sys.stdout, "isatty") and sys.stdout.isatty()
+
+    if is_tty:
+        with Progress(
+            SpinnerColumn(),
+            TextColumn("[progress.description]{task.description}"),
+            BarColumn(bar_width=30),
+            TextColumn("[progress.percentage]{task.percentage:>3.0f}%"),
+            TextColumn("[dim]{task.fields[status]}[/dim]"),
+            console=console,
+        ) as progress:
+            task_id = progress.add_task("Scanning", total=len(attacks), status="starting...")
+
+            def on_progress(attack_idx, total_attacks, attack_name, trial_idx, total_trials):
+                short_name = attack_name[:35] + "..." if len(attack_name) > 35 else attack_name
+                progress.update(
+                    task_id,
+                    completed=attack_idx - 1 + (trial_idx / total_trials if total_trials else 0),
+                    description=f"[{attack_idx}/{total_attacks}]",
+                    status=f"{short_name} ({trial_idx}/{total_trials})",
+                )
+
+            report = run_scan(
+                agent=agent, attacks=attacks, target_name=url, trials=trials,
+                concurrency=concurrency, canary_tokens=canary_tokens,
+                on_progress=on_progress,
+            )
+            progress.update(task_id, completed=len(attacks), description="Done", status="✓")
+    else:
+        _last_printed = [0]
+
+        def on_progress(attack_idx, total_attacks, attack_name, trial_idx, total_trials):
+            if attack_idx != _last_printed[0]:
+                _last_printed[0] = attack_idx
+                pct = int(100 * attack_idx / total_attacks)
+                console.print(f"  [{attack_idx}/{total_attacks}] {attack_name}... ({pct}%)")
+
+        report = run_scan(
+            agent=agent, attacks=attacks, target_name=url, trials=trials,
+            concurrency=concurrency, canary_tokens=canary_tokens,
+            on_progress=on_progress,
+        )
+
+    elapsed = time.time() - t_start
+    console.print(f"[dim]Completed in {elapsed:.0f}s ({elapsed/len(attacks):.1f}s per attack)[/dim]\n")
+
+    if agent._cache:
+        st = agent._cache.stats()
+        if st["hits"] or st["misses"]:
+            console.print(f"[dim]Cache: {st['hits']} hits, {st['misses']} misses[/dim]")
+
+    _output_report(report, output)
+    return report
+
+
 def _run_demo_scan(output: str, trials: int) -> "ScanReport":
     """Run scan against built-in vulnerable demo agent."""
     from .demo import run_demo_scan
@@ -673,26 +950,48 @@ def _run_target_scan(target: str, output: str, trials: int, concurrency: int = 5
     console.print(f"[dim]Running {mode_label} (~{total_calls} LLM calls, concurrency={concurrency})[/dim]\n")
 
     t_start = time.time()
+    is_tty = hasattr(sys.stdout, "isatty") and sys.stdout.isatty()
+    _last_printed_attack = [0]
 
-    # Progress bar
-    with Progress(
-        SpinnerColumn(),
-        TextColumn("[progress.description]{task.description}"),
-        BarColumn(),
-        TextColumn("[progress.percentage]{task.percentage:>3.0f}%"),
-        TextColumn("[dim]{task.fields[status]}[/dim]"),
-        console=console,
-        transient=True,
-    ) as progress:
-        task_id = progress.add_task("Scanning", total=len(attacks), status="")
+    if is_tty:
+        # Rich animated progress bar for interactive terminals
+        with Progress(
+            SpinnerColumn(),
+            TextColumn("[progress.description]{task.description}"),
+            BarColumn(bar_width=30),
+            TextColumn("[progress.percentage]{task.percentage:>3.0f}%"),
+            TextColumn("[dim]{task.fields[status]}[/dim]"),
+            console=console,
+        ) as progress:
+            task_id = progress.add_task("Scanning", total=len(attacks), status="starting...")
 
+            def on_progress(attack_idx, total_attacks, attack_name, trial_idx, total_trials):
+                short_name = attack_name[:35] + "..." if len(attack_name) > 35 else attack_name
+                progress.update(
+                    task_id,
+                    completed=attack_idx - 1 + (trial_idx / total_trials if total_trials else 0),
+                    description=f"[{attack_idx}/{total_attacks}]",
+                    status=f"{short_name} ({trial_idx}/{total_trials})",
+                )
+
+            try:
+                report = run_scan(
+                    agent=agent, attacks=attacks, target_name=target, trials=trials,
+                    concurrency=concurrency,
+                    canary_tokens=canary_tokens, env_manager=env_mgr,
+                    on_progress=on_progress,
+                )
+            finally:
+                env_mgr.cleanup()
+
+            progress.update(task_id, completed=len(attacks), description="Done", status="✓")
+    else:
+        # Plain text progress for CI/piped output
         def on_progress(attack_idx, total_attacks, attack_name, trial_idx, total_trials):
-            progress.update(
-                task_id,
-                completed=attack_idx - 1 + (trial_idx / total_trials if total_trials else 0),
-                description=f"[{attack_idx}/{total_attacks}]",
-                status=f"{attack_name} ({trial_idx}/{total_trials})",
-            )
+            if attack_idx != _last_printed_attack[0]:
+                _last_printed_attack[0] = attack_idx
+                pct = int(100 * attack_idx / total_attacks)
+                console.print(f"  [{attack_idx}/{total_attacks}] {attack_name}... ({pct}%)")
 
         try:
             report = run_scan(
@@ -703,8 +1002,6 @@ def _run_target_scan(target: str, output: str, trials: int, concurrency: int = 5
             )
         finally:
             env_mgr.cleanup()
-
-        progress.update(task_id, completed=len(attacks), status="done")
 
     elapsed = time.time() - t_start
     console.print(f"[dim]Completed in {elapsed:.0f}s ({elapsed/len(attacks):.1f}s per attack)[/dim]\n")
@@ -781,6 +1078,8 @@ def _output_report(report: ScanReport, output_path: str) -> None:
                 console.print(f"    Why: {r.attack_reason}")
             if r.fix_suggestion:
                 console.print(f"    [dim]Fix: {r.fix_suggestion}[/dim]")
+            if r.attack.cve:
+                console.print(f"    [dim]CVE: {r.attack.cve} — {r.attack.cve_context}[/dim]")
 
     console.print(f"\nReport written to: {output_path}")
 
